@@ -13,31 +13,6 @@ init_database()
 
 
 # ==========================================
-# CREATE CHAT TABLE
-# ==========================================
-
-def init_chat_database():
-
-    connection = get_connection()
-
-    connection.execute("""
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sender_id INTEGER NOT NULL,
-            receiver_id INTEGER NOT NULL,
-            message TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    connection.commit()
-    connection.close()
-
-
-init_chat_database()
-
-
-# ==========================================
 # HOME
 # ==========================================
 
@@ -92,7 +67,6 @@ def signup():
     ).fetchone()
 
     if existing_user:
-
         connection.close()
 
         return jsonify({
@@ -288,7 +262,6 @@ def get_user(user_id):
     connection.close()
 
     if not user:
-
         return jsonify({
             "success": False,
             "message": "User not found."
@@ -342,7 +315,6 @@ def update_profile(user_id):
     ).fetchone()
 
     if not user:
-
         connection.close()
 
         return jsonify({
@@ -437,7 +409,6 @@ def create_request():
     ).fetchone()
 
     if existing:
-
         connection.close()
 
         return jsonify({
@@ -564,7 +535,6 @@ def update_request(request_id):
     ).fetchone()
 
     if not existing:
-
         connection.close()
 
         return jsonify({
@@ -655,7 +625,7 @@ def get_connections(user_id):
 
 
 # ==========================================
-# SEND CHAT MESSAGE
+# SEND MESSAGE
 # ==========================================
 
 @app.route("/api/messages", methods=["POST"])
@@ -664,7 +634,6 @@ def send_message():
     data = request.get_json()
 
     if not data:
-
         return jsonify({
             "success": False,
             "message": "No data received."
@@ -690,42 +659,18 @@ def send_message():
 
     connection = get_connection()
 
-    sender = connection.execute(
-        "SELECT id FROM users WHERE id = ?",
-        (sender_id,)
-    ).fetchone()
-
-    receiver = connection.execute(
-        "SELECT id FROM users WHERE id = ?",
-        (receiver_id,)
-    ).fetchone()
-
-    if not sender or not receiver:
-
-        connection.close()
-
-        return jsonify({
-            "success": False,
-            "message": "User not found."
-        }), 404
-
-    # Only connected users can chat
-
+    # Check that they are connected
     connected = connection.execute(
         """
         SELECT id
         FROM requests
         WHERE
             (
-                sender_id = ?
-                AND receiver_id = ?
+                (sender_id = ? AND receiver_id = ?)
+                OR
+                (sender_id = ? AND receiver_id = ?)
             )
-            OR
-            (
-                sender_id = ?
-                AND receiver_id = ?
-            )
-        AND status = 'accepted'
+            AND status = 'accepted'
         LIMIT 1
         """,
         (
@@ -742,7 +687,7 @@ def send_message():
 
         return jsonify({
             "success": False,
-            "message": "You can chat only with connected users."
+            "message": "You are not connected with this user."
         }), 403
 
     cursor = connection.execute(
@@ -765,31 +710,16 @@ def send_message():
     message_id = cursor.lastrowid
 
     connection.commit()
-
-    row = connection.execute(
-        """
-        SELECT
-            id,
-            sender_id,
-            receiver_id,
-            message,
-            created_at
-        FROM messages
-        WHERE id = ?
-        """,
-        (message_id,)
-    ).fetchone()
-
     connection.close()
 
     return jsonify({
         "success": True,
-        "message": {
-            "id": row["id"],
-            "senderId": row["sender_id"],
-            "receiverId": row["receiver_id"],
-            "message": row["message"],
-            "createdAt": row["created_at"]
+        "message": "Message sent.",
+        "data": {
+            "id": message_id,
+            "senderId": int(sender_id),
+            "receiverId": int(receiver_id),
+            "message": message
         }
     }), 201
 
@@ -799,39 +729,39 @@ def send_message():
 # ==========================================
 
 @app.route(
-    "/api/messages/<int:user1_id>/<int:user2_id>",
+    "/api/messages/<int:user_id>/<int:other_user_id>",
     methods=["GET"]
 )
-def get_messages(user1_id, user2_id):
+def get_messages(user_id, other_user_id):
 
     connection = get_connection()
 
     rows = connection.execute(
         """
         SELECT
-            id,
-            sender_id,
-            receiver_id,
-            message,
-            created_at
-        FROM messages
+            m.id,
+            m.sender_id,
+            m.receiver_id,
+            m.message,
+            m.created_at
+        FROM messages m
         WHERE
             (
-                sender_id = ?
-                AND receiver_id = ?
+                m.sender_id = ?
+                AND m.receiver_id = ?
             )
             OR
             (
-                sender_id = ?
-                AND receiver_id = ?
+                m.sender_id = ?
+                AND m.receiver_id = ?
             )
-        ORDER BY id ASC
+        ORDER BY m.id ASC
         """,
         (
-            user1_id,
-            user2_id,
-            user2_id,
-            user1_id
+            user_id,
+            other_user_id,
+            other_user_id,
+            user_id
         )
     ).fetchall()
 
