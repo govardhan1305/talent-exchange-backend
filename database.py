@@ -96,7 +96,41 @@ def init_database():
 
 
     # ======================================
-    # INDEXES
+    # MESSAGES TABLE
+    # ======================================
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS messages (
+
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            sender_id INTEGER NOT NULL,
+
+            receiver_id INTEGER NOT NULL,
+
+            message TEXT NOT NULL,
+
+            created_at TIMESTAMP
+                DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (
+                sender_id
+            )
+            REFERENCES users(id),
+
+            FOREIGN KEY (
+                receiver_id
+            )
+            REFERENCES users(id)
+
+        )
+        """
+    )
+
+
+    # ======================================
+    # REQUEST INDEXES
     # ======================================
 
     connection.execute(
@@ -113,6 +147,28 @@ def init_database():
         CREATE INDEX IF NOT EXISTS
         idx_requests_receiver
         ON requests(receiver_id)
+        """
+    )
+
+
+    # ======================================
+    # MESSAGE INDEXES
+    # ======================================
+
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+        idx_messages_sender
+        ON messages(sender_id)
+        """
+    )
+
+
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+        idx_messages_receiver
+        ON messages(receiver_id)
         """
     )
 
