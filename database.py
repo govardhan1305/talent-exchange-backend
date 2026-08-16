@@ -1,11 +1,6 @@
 import sqlite3
 import os
 
-
-# ==========================================
-# DATABASE PATH
-# ==========================================
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 DATABASE_PATH = os.path.join(
@@ -14,25 +9,16 @@ DATABASE_PATH = os.path.join(
 )
 
 
-# ==========================================
-# GET DATABASE CONNECTION
-# ==========================================
-
 def get_connection():
 
     connection = sqlite3.connect(
         DATABASE_PATH
     )
 
-    # Allows us to access columns by name
     connection.row_factory = sqlite3.Row
 
     return connection
 
-
-# ==========================================
-# INITIALIZE DATABASE
-# ==========================================
 
 def init_database():
 
@@ -66,10 +52,6 @@ def init_database():
 
     connection.close()
 
-
-# ==========================================
-# TEST DATABASE
-# ==========================================
 
 if __name__ == "__main__":
 
