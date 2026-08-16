@@ -9,11 +9,6 @@ app = Flask(__name__)
 
 CORS(app)
 
-
-# ==========================================
-# INITIALIZE DATABASE
-# ==========================================
-
 init_database()
 
 
@@ -23,6 +18,7 @@ init_database()
 
 @app.route("/")
 def home():
+
     return jsonify({
         "success": True,
         "message": "Talent Exchange Python Backend is running!"
@@ -39,6 +35,7 @@ def signup():
     data = request.get_json()
 
     if not data:
+
         return jsonify({
             "success": False,
             "message": "No data received."
@@ -52,12 +49,14 @@ def signup():
     bio = data.get("bio", "").strip()
 
     if not name or not email or not password:
+
         return jsonify({
             "success": False,
             "message": "All fields are required."
         }), 400
 
     if len(password) < 6:
+
         return jsonify({
             "success": False,
             "message": "Password must contain at least 6 characters."
@@ -71,6 +70,7 @@ def signup():
     ).fetchone()
 
     if existing_user:
+
         connection.close()
 
         return jsonify({
@@ -78,7 +78,6 @@ def signup():
             "message": "An account with this email already exists."
         }), 409
 
-    # Correct password hashing line
     hashed_password = generate_password_hash(password)
 
     cursor = connection.execute(
@@ -133,6 +132,7 @@ def login():
     data = request.get_json()
 
     if not data:
+
         return jsonify({
             "success": False,
             "message": "No data received."
@@ -142,6 +142,7 @@ def login():
     password = data.get("password", "")
 
     if not email or not password:
+
         return jsonify({
             "success": False,
             "message": "Email and password are required."
@@ -168,6 +169,7 @@ def login():
     connection.close()
 
     if not user:
+
         return jsonify({
             "success": False,
             "message": "Invalid email or password."
@@ -177,6 +179,7 @@ def login():
         user["password"],
         password
     ):
+
         return jsonify({
             "success": False,
             "message": "Invalid email or password."
@@ -197,7 +200,7 @@ def login():
 
 
 # ==========================================
-# GET USERS
+# GET ALL USERS
 # ==========================================
 
 @app.route("/api/users", methods=["GET"])
@@ -224,6 +227,7 @@ def get_users():
     result = []
 
     for user in users:
+
         result.append({
             "id": user["id"],
             "name": user["name"],
@@ -240,6 +244,135 @@ def get_users():
 
 
 # ==========================================
+# GET SINGLE USER
+# ==========================================
+
+@app.route("/api/users/<int:user_id>", methods=["GET"])
+def get_user(user_id):
+
+    connection = get_connection()
+
+    user = connection.execute(
+        """
+        SELECT
+            id,
+            name,
+            email,
+            skill,
+            learning_skill,
+            bio
+        FROM users
+        WHERE id = ?
+        """,
+        (user_id,)
+    ).fetchone()
+
+    connection.close()
+
+    if not user:
+
+        return jsonify({
+            "success": False,
+            "message": "User not found."
+        }), 404
+
+    return jsonify({
+        "success": True,
+        "user": {
+            "id": user["id"],
+            "name": user["name"],
+            "email": user["email"],
+            "skill": user["skill"] or "",
+            "learningSkill": user["learning_skill"] or "",
+            "bio": user["bio"] or ""
+        }
+    })
+
+
+# ==========================================
+# UPDATE PROFILE
+# ==========================================
+
+@app.route("/api/users/<int:user_id>", methods=["PUT"])
+def update_profile(user_id):
+
+    data = request.get_json()
+
+    if not data:
+
+        return jsonify({
+            "success": False,
+            "message": "No data received."
+        }), 400
+
+    name = data.get("name", "").strip()
+    email = data.get("email", "").strip().lower()
+    skill = data.get("skill", "").strip()
+    learning_skill = data.get("learningSkill", "").strip()
+    bio = data.get("bio", "").strip()
+
+    if not name or not email or not skill:
+
+        return jsonify({
+            "success": False,
+            "message": "Name, email and skill are required."
+        }), 400
+
+    connection = get_connection()
+
+    user = connection.execute(
+        "SELECT id FROM users WHERE id = ?",
+        (user_id,)
+    ).fetchone()
+
+    if not user:
+
+        connection.close()
+
+        return jsonify({
+            "success": False,
+            "message": "User not found."
+        }), 404
+
+    connection.execute(
+        """
+        UPDATE users
+        SET
+            name = ?,
+            email = ?,
+            skill = ?,
+            learning_skill = ?,
+            bio = ?
+        WHERE id = ?
+        """,
+        (
+            name,
+            email,
+            skill,
+            learning_skill,
+            bio,
+            user_id
+        )
+    )
+
+    connection.commit()
+    connection.close()
+
+    return jsonify({
+        "success": True,
+        "message": "Profile updated successfully.",
+        "user": {
+            "id": user_id,
+            "name": name,
+            "email": email,
+            "skill": skill,
+            "learningSkill": learning_skill,
+            "bio": bio
+        }
+    })
+
+
+# ==========================================
 # SEND REQUEST
 # ==========================================
 
@@ -249,6 +382,7 @@ def create_request():
     data = request.get_json()
 
     if not data:
+
         return jsonify({
             "success": False,
             "message": "No data received."
@@ -259,12 +393,14 @@ def create_request():
     skill = data.get("skill", "").strip()
 
     if not sender_id or not receiver_id or not skill:
+
         return jsonify({
             "success": False,
             "message": "All fields are required."
         }), 400
 
     if int(sender_id) == int(receiver_id):
+
         return jsonify({
             "success": False,
             "message": "You cannot send a request to yourself."
@@ -288,6 +424,7 @@ def create_request():
     ).fetchone()
 
     if existing:
+
         connection.close()
 
         return jsonify({
@@ -326,7 +463,7 @@ def create_request():
 
 
 # ==========================================
-# GET RECEIVED REQUESTS
+# GET REQUESTS
 # ==========================================
 
 @app.route("/api/requests/<int:user_id>", methods=["GET"])
@@ -359,6 +496,7 @@ def get_requests(user_id):
     requests = []
 
     for row in rows:
+
         requests.append({
             "id": row["request_id"],
             "skill": row["request_skill"],
@@ -388,6 +526,7 @@ def update_request(request_id):
     data = request.get_json()
 
     if not data:
+
         return jsonify({
             "success": False,
             "message": "No data received."
@@ -396,6 +535,7 @@ def update_request(request_id):
     new_status = data.get("status")
 
     if new_status not in ["accepted", "rejected"]:
+
         return jsonify({
             "success": False,
             "message": "Invalid request status."
@@ -413,6 +553,7 @@ def update_request(request_id):
     ).fetchone()
 
     if not existing:
+
         connection.close()
 
         return jsonify({
@@ -453,7 +594,7 @@ def get_connections(user_id):
 
     rows = connection.execute(
         """
-        SELECT
+        SELECT DISTINCT
             u.id,
             u.name,
             u.email,
