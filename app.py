@@ -13,6 +13,31 @@ init_database()
 
 
 # ==========================================
+# CREATE CHAT TABLE
+# ==========================================
+
+def init_chat_database():
+
+    connection = get_connection()
+
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender_id INTEGER NOT NULL,
+            receiver_id INTEGER NOT NULL,
+            message TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    connection.commit()
+    connection.close()
+
+
+init_chat_database()
+
+
+# ==========================================
 # HOME
 # ==========================================
 
@@ -35,7 +60,6 @@ def signup():
     data = request.get_json()
 
     if not data:
-
         return jsonify({
             "success": False,
             "message": "No data received."
@@ -49,14 +73,12 @@ def signup():
     bio = data.get("bio", "").strip()
 
     if not name or not email or not password:
-
         return jsonify({
             "success": False,
             "message": "All fields are required."
         }), 400
 
     if len(password) < 6:
-
         return jsonify({
             "success": False,
             "message": "Password must contain at least 6 characters."
@@ -132,7 +154,6 @@ def login():
     data = request.get_json()
 
     if not data:
-
         return jsonify({
             "success": False,
             "message": "No data received."
@@ -142,7 +163,6 @@ def login():
     password = data.get("password", "")
 
     if not email or not password:
-
         return jsonify({
             "success": False,
             "message": "Email and password are required."
@@ -169,7 +189,6 @@ def login():
     connection.close()
 
     if not user:
-
         return jsonify({
             "success": False,
             "message": "Invalid email or password."
@@ -179,7 +198,6 @@ def login():
         user["password"],
         password
     ):
-
         return jsonify({
             "success": False,
             "message": "Invalid email or password."
@@ -299,7 +317,6 @@ def update_profile(user_id):
     data = request.get_json()
 
     if not data:
-
         return jsonify({
             "success": False,
             "message": "No data received."
@@ -312,7 +329,6 @@ def update_profile(user_id):
     bio = data.get("bio", "").strip()
 
     if not name or not email or not skill:
-
         return jsonify({
             "success": False,
             "message": "Name, email and skill are required."
@@ -382,7 +398,6 @@ def create_request():
     data = request.get_json()
 
     if not data:
-
         return jsonify({
             "success": False,
             "message": "No data received."
@@ -393,14 +408,12 @@ def create_request():
     skill = data.get("skill", "").strip()
 
     if not sender_id or not receiver_id or not skill:
-
         return jsonify({
             "success": False,
             "message": "All fields are required."
         }), 400
 
     if int(sender_id) == int(receiver_id):
-
         return jsonify({
             "success": False,
             "message": "You cannot send a request to yourself."
@@ -526,7 +539,6 @@ def update_request(request_id):
     data = request.get_json()
 
     if not data:
-
         return jsonify({
             "success": False,
             "message": "No data received."
@@ -535,7 +547,6 @@ def update_request(request_id):
     new_status = data.get("status")
 
     if new_status not in ["accepted", "rejected"]:
-
         return jsonify({
             "success": False,
             "message": "Invalid request status."
@@ -640,6 +651,207 @@ def get_connections(user_id):
     return jsonify({
         "success": True,
         "connections": connections
+    })
+
+
+# ==========================================
+# SEND CHAT MESSAGE
+# ==========================================
+
+@app.route("/api/messages", methods=["POST"])
+def send_message():
+
+    data = request.get_json()
+
+    if not data:
+
+        return jsonify({
+            "success": False,
+            "message": "No data received."
+        }), 400
+
+    sender_id = data.get("senderId")
+    receiver_id = data.get("receiverId")
+    message = data.get("message", "").strip()
+
+    if not sender_id or not receiver_id or not message:
+
+        return jsonify({
+            "success": False,
+            "message": "senderId, receiverId and message are required."
+        }), 400
+
+    if int(sender_id) == int(receiver_id):
+
+        return jsonify({
+            "success": False,
+            "message": "You cannot message yourself."
+        }), 400
+
+    connection = get_connection()
+
+    sender = connection.execute(
+        "SELECT id FROM users WHERE id = ?",
+        (sender_id,)
+    ).fetchone()
+
+    receiver = connection.execute(
+        "SELECT id FROM users WHERE id = ?",
+        (receiver_id,)
+    ).fetchone()
+
+    if not sender or not receiver:
+
+        connection.close()
+
+        return jsonify({
+            "success": False,
+            "message": "User not found."
+        }), 404
+
+    # Only connected users can chat
+
+    connected = connection.execute(
+        """
+        SELECT id
+        FROM requests
+        WHERE
+            (
+                sender_id = ?
+                AND receiver_id = ?
+            )
+            OR
+            (
+                sender_id = ?
+                AND receiver_id = ?
+            )
+        AND status = 'accepted'
+        LIMIT 1
+        """,
+        (
+            sender_id,
+            receiver_id,
+            receiver_id,
+            sender_id
+        )
+    ).fetchone()
+
+    if not connected:
+
+        connection.close()
+
+        return jsonify({
+            "success": False,
+            "message": "You can chat only with connected users."
+        }), 403
+
+    cursor = connection.execute(
+        """
+        INSERT INTO messages
+        (
+            sender_id,
+            receiver_id,
+            message
+        )
+        VALUES (?, ?, ?)
+        """,
+        (
+            sender_id,
+            receiver_id,
+            message
+        )
+    )
+
+    message_id = cursor.lastrowid
+
+    connection.commit()
+
+    row = connection.execute(
+        """
+        SELECT
+            id,
+            sender_id,
+            receiver_id,
+            message,
+            created_at
+        FROM messages
+        WHERE id = ?
+        """,
+        (message_id,)
+    ).fetchone()
+
+    connection.close()
+
+    return jsonify({
+        "success": True,
+        "message": {
+            "id": row["id"],
+            "senderId": row["sender_id"],
+            "receiverId": row["receiver_id"],
+            "message": row["message"],
+            "createdAt": row["created_at"]
+        }
+    }), 201
+
+
+# ==========================================
+# GET CHAT MESSAGES
+# ==========================================
+
+@app.route(
+    "/api/messages/<int:user1_id>/<int:user2_id>",
+    methods=["GET"]
+)
+def get_messages(user1_id, user2_id):
+
+    connection = get_connection()
+
+    rows = connection.execute(
+        """
+        SELECT
+            id,
+            sender_id,
+            receiver_id,
+            message,
+            created_at
+        FROM messages
+        WHERE
+            (
+                sender_id = ?
+                AND receiver_id = ?
+            )
+            OR
+            (
+                sender_id = ?
+                AND receiver_id = ?
+            )
+        ORDER BY id ASC
+        """,
+        (
+            user1_id,
+            user2_id,
+            user2_id,
+            user1_id
+        )
+    ).fetchall()
+
+    connection.close()
+
+    messages = []
+
+    for row in rows:
+
+        messages.append({
+            "id": row["id"],
+            "senderId": row["sender_id"],
+            "receiverId": row["receiver_id"],
+            "message": row["message"],
+            "createdAt": row["created_at"]
+        })
+
+    return jsonify({
+        "success": True,
+        "messages": messages
     })
 
 
