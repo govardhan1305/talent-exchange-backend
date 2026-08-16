@@ -5,6 +5,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from database import get_connection, init_database
 
 
+
 app = Flask(__name__)
 
 CORS(app)
