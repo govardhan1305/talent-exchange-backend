@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
-import os
 
 from database import get_connection, init_database
 
@@ -10,16 +9,30 @@ app = Flask(__name__)
 
 CORS(app)
 
+
+# ==========================================
+# INITIALIZE DATABASE
+# ==========================================
+
 init_database()
 
 
+# ==========================================
+# HOME
+# ==========================================
+
 @app.route("/")
 def home():
+
     return jsonify({
         "success": True,
         "message": "Talent Exchange Python Backend is running!"
     })
 
+
+# ==========================================
+# SIGNUP
+# ==========================================
 
 @app.route("/api/signup", methods=["POST"])
 def signup():
@@ -27,397 +40,768 @@ def signup():
     data = request.get_json()
 
     if not data:
+
         return jsonify({
             "success": False,
             "message": "No data received."
         }), 400
 
+
     name = data.get("name", "").strip()
+
     email = data.get("email", "").strip().lower()
+
     password = data.get("password", "")
+
     skill = data.get("skill", "").strip()
 
-    if not name or not email or not password or not skill:
+    learning_skill = data.get(
+        "learningSkill",
+        ""
+    ).strip()
+
+    bio = data.get(
+        "bio",
+        ""
+    ).strip()
+
+
+    # Required fields
+
+    if not name or not email or not password:
+
         return jsonify({
             "success": False,
             "message": "All fields are required."
         }), 400
 
+
+    # Password validation
+
     if len(password) < 6:
+
         return jsonify({
             "success": False,
-            "message": "Password must contain at least 6 characters."
+            "message":
+                "Password must contain at least 6 characters."
         }), 400
+
 
     connection = get_connection()
 
-    try:
 
-        existing_user = connection.execute(
-            "SELECT id FROM users WHERE email = ?",
-            (email,)
-        ).fetchone()
+    # Check existing user
 
-        if existing_user:
-            return jsonify({
-                "success": False,
-                "message": "An account with this email already exists."
-            }), 409
+    existing_user = connection.execute(
+        """
+        SELECT id
+        FROM users
+        WHERE email = ?
+        """,
+        (email,)
+    ).fetchone()
 
-        hashed_password = generate_password_hash(password)
 
-        connection.execute(
-            """
-            INSERT INTO users
-            (name, email, password, skill)
-            VALUES (?, ?, ?, ?)
-            """,
-            (
-                name,
-                email,
-                hashed_password,
-                skill
-            )
-        )
+    if existing_user:
 
-        connection.commit()
-
-        return jsonify({
-            "success": True,
-            "message": "Account created successfully."
-        }), 201
-
-    finally:
         connection.close()
 
+        return jsonify({
+            "success": False,
+            "message":
+                "An account with this email already exists."
+        }), 409
+
+
+    # Hash password
+
+    hashed_password =
+        generate_password_hash(password)
+
+
+    # Insert user
+
+    cursor = connection.execute(
+        """
+        INSERT INTO users
+        (
+            name,
+            email,
+            password,
+            skill,
+            learning_skill,
+            bio
+        )
+
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            name,
+            email,
+            hashed_password,
+            skill,
+            learning_skill,
+            bio
+        )
+    )
+
+
+    user_id = cursor.lastrowid
+
+
+    connection.commit()
+
+    connection.close()
+
+
+    return jsonify({
+
+        "success": True,
+
+        "message":
+            "Account created successfully.",
+
+        "user": {
+
+            "id": user_id,
+
+            "name": name,
+
+            "email": email,
+
+            "skill": skill,
+
+            "learningSkill":
+                learning_skill,
+
+            "bio": bio
+
+        }
+
+    }), 201
+
+
+# ==========================================
+# LOGIN
+# ==========================================
 
 @app.route("/api/login", methods=["POST"])
 def login():
 
     data = request.get_json()
 
+
     if not data:
+
         return jsonify({
             "success": False,
             "message": "No data received."
         }), 400
 
-    email = data.get("email", "").strip().lower()
-    password = data.get("password", "")
+
+    email = data.get(
+        "email",
+        ""
+    ).strip().lower()
+
+
+    password = data.get(
+        "password",
+        ""
+    )
+
 
     if not email or not password:
+
         return jsonify({
             "success": False,
-            "message": "Email and password are required."
+            "message":
+                "Email and password are required."
         }), 400
+
 
     connection = get_connection()
 
-    try:
 
-        user = connection.execute(
-            """
-            SELECT
-                id,
-                name,
-                email,
-                password,
-                skill,
-                learning_skill,
-                bio
-            FROM users
-            WHERE email = ?
-            """,
-            (email,)
-        ).fetchone()
+    user = connection.execute(
+        """
+        SELECT
+            id,
+            name,
+            email,
+            password,
+            skill,
+            learning_skill,
+            bio
 
-    finally:
-        connection.close()
+        FROM users
+
+        WHERE email = ?
+        """,
+        (email,)
+    ).fetchone()
+
+
+    connection.close()
+
 
     if not user:
+
         return jsonify({
             "success": False,
-            "message": "Invalid email or password."
+            "message":
+                "Invalid email or password."
         }), 401
+
 
     if not check_password_hash(
         user["password"],
         password
     ):
+
         return jsonify({
             "success": False,
-            "message": "Invalid email or password."
+            "message":
+                "Invalid email or password."
         }), 401
 
+
     return jsonify({
+
         "success": True,
-        "message": "Login successful.",
+
+        "message":
+            "Login successful.",
+
         "user": {
-            "id": user["id"],
-            "name": user["name"],
-            "email": user["email"],
-            "skill": user["skill"] or "",
-            "learningSkill": user["learning_skill"] or "",
-            "bio": user["bio"] or ""
+
+            "id":
+                user["id"],
+
+            "name":
+                user["name"],
+
+            "email":
+                user["email"],
+
+            "skill":
+                user["skill"] or "",
+
+            "learningSkill":
+                user["learning_skill"] or "",
+
+            "bio":
+                user["bio"] or ""
+
         }
+
     })
 
+
+# ==========================================
+# GET USERS
+# ==========================================
 
 @app.route("/api/users", methods=["GET"])
 def get_users():
 
     connection = get_connection()
 
-    try:
 
-        users = connection.execute(
-            """
-            SELECT
-                id,
-                name,
-                email,
-                skill,
-                learning_skill,
-                bio
-            FROM users
-            ORDER BY name ASC
-            """
-        ).fetchall()
+    users = connection.execute(
+        """
+        SELECT
+            id,
+            name,
+            email,
+            skill,
+            learning_skill,
+            bio
 
-        user_list = []
+        FROM users
 
-        for user in users:
-            user_list.append({
-                "id": user["id"],
-                "name": user["name"],
-                "email": user["email"],
-                "skill": user["skill"] or "",
-                "learningSkill": user["learning_skill"] or "",
-                "bio": user["bio"] or ""
-            })
+        ORDER BY id DESC
+        """
+    ).fetchall()
 
-        return jsonify({
-            "success": True,
-            "users": user_list
+
+    connection.close()
+
+
+    result = []
+
+
+    for user in users:
+
+        result.append({
+
+            "id":
+                user["id"],
+
+            "name":
+                user["name"],
+
+            "email":
+                user["email"],
+
+            "skill":
+                user["skill"] or "",
+
+            "learningSkill":
+                user["learning_skill"] or "",
+
+            "bio":
+                user["bio"] or ""
+
         })
 
-    finally:
-        connection.close()
+
+    return jsonify({
+
+        "success": True,
+
+        "users": result
+
+    })
 
 
-@app.route("/api/requests", methods=["POST"])
+# ==========================================
+# SEND REQUEST
+# ==========================================
+
+@app.route(
+    "/api/requests",
+    methods=["POST"]
+)
 def create_request():
 
     data = request.get_json()
 
+
     if not data:
+
         return jsonify({
             "success": False,
-            "message": "No data received."
+            "message":
+                "No data received."
         }), 400
 
-    sender_id = data.get("senderId")
-    receiver_id = data.get("receiverId")
-    skill = data.get("skill", "").strip()
+
+    sender_id = data.get(
+        "senderId"
+    )
+
+
+    receiver_id = data.get(
+        "receiverId"
+    )
+
+
+    skill = data.get(
+        "skill",
+        ""
+    ).strip()
+
 
     if not sender_id or not receiver_id or not skill:
+
         return jsonify({
             "success": False,
-            "message": "Sender, receiver and skill are required."
+            "message":
+                "All fields are required."
         }), 400
 
-    if sender_id == receiver_id:
+
+    if int(sender_id) == int(receiver_id):
+
         return jsonify({
             "success": False,
-            "message": "You cannot send a request to yourself."
+            "message":
+                "You cannot send a request to yourself."
         }), 400
+
 
     connection = get_connection()
 
-    try:
 
-        sender = connection.execute(
-            "SELECT id FROM users WHERE id = ?",
-            (sender_id,)
-        ).fetchone()
+    # Check duplicate pending request
 
-        receiver = connection.execute(
-            "SELECT id FROM users WHERE id = ?",
-            (receiver_id,)
-        ).fetchone()
+    existing = connection.execute(
+        """
+        SELECT id
+        FROM requests
 
-        if not sender or not receiver:
-            return jsonify({
-                "success": False,
-                "message": "User not found."
-            }), 404
-
-        existing_request = connection.execute(
-            """
-            SELECT id
-            FROM exchange_requests
-            WHERE sender_id = ?
+        WHERE
+            sender_id = ?
             AND receiver_id = ?
-            AND skill = ?
             AND status = 'pending'
-            """,
-            (
-                sender_id,
-                receiver_id,
-                skill
-            )
-        ).fetchone()
-
-        if existing_request:
-            return jsonify({
-                "success": False,
-                "message": "Request already sent."
-            }), 409
-
-        connection.execute(
-            """
-            INSERT INTO exchange_requests
-            (sender_id, receiver_id, skill, status)
-            VALUES (?, ?, ?, 'pending')
-            """,
-            (
-                sender_id,
-                receiver_id,
-                skill
-            )
+        """,
+        (
+            sender_id,
+            receiver_id
         )
+    ).fetchone()
 
-        connection.commit()
 
-        return jsonify({
-            "success": True,
-            "message": "Exchange request sent successfully."
-        }), 201
+    if existing:
 
-    finally:
         connection.close()
 
+        return jsonify({
+            "success": False,
+            "message":
+                "Request already sent."
+        }), 409
 
-@app.route("/api/requests/<int:user_id>", methods=["GET"])
+
+    # Insert request
+
+    cursor = connection.execute(
+        """
+        INSERT INTO requests
+        (
+            sender_id,
+            receiver_id,
+            skill,
+            status
+        )
+
+        VALUES (?, ?, ?, 'pending')
+        """,
+        (
+            sender_id,
+            receiver_id,
+            skill
+        )
+    )
+
+
+    request_id = cursor.lastrowid
+
+
+    connection.commit()
+
+    connection.close()
+
+
+    return jsonify({
+
+        "success": True,
+
+        "message":
+            "Request sent successfully.",
+
+        "requestId":
+            request_id
+
+    }), 201
+
+
+# ==========================================
+# GET RECEIVED REQUESTS
+# ==========================================
+
+@app.route(
+    "/api/requests/<int:user_id>",
+    methods=["GET"]
+)
 def get_requests(user_id):
 
     connection = get_connection()
 
-    try:
 
-        requests = connection.execute(
-            """
-            SELECT
-                exchange_requests.id,
-                exchange_requests.skill,
-                exchange_requests.status,
-                exchange_requests.created_at,
-                users.id AS sender_id,
-                users.name AS sender_name,
-                users.email AS sender_email,
-                users.skill AS sender_skill
-            FROM exchange_requests
-            JOIN users
-                ON exchange_requests.sender_id = users.id
-            WHERE exchange_requests.receiver_id = ?
-            ORDER BY exchange_requests.created_at DESC
-            """,
-            (user_id,)
-        ).fetchall()
+    rows = connection.execute(
+        """
+        SELECT
 
-        request_list = []
+            r.id AS request_id,
 
-        for item in requests:
+            r.skill AS request_skill,
 
-            request_list.append({
-                "id": item["id"],
-                "skill": item["skill"],
-                "status": item["status"],
-                "createdAt": item["created_at"],
-                "sender": {
-                    "id": item["sender_id"],
-                    "name": item["sender_name"],
-                    "email": item["sender_email"],
-                    "skill": item["sender_skill"] or ""
-                }
-            })
+            r.status AS request_status,
 
-        return jsonify({
-            "success": True,
-            "requests": request_list
+            r.created_at,
+
+            u.id AS sender_id,
+
+            u.name AS sender_name,
+
+            u.email AS sender_email,
+
+            u.skill AS sender_skill
+
+        FROM requests r
+
+        JOIN users u
+            ON r.sender_id = u.id
+
+        WHERE r.receiver_id = ?
+
+        ORDER BY r.id DESC
+        """,
+        (user_id,)
+    ).fetchall()
+
+
+    connection.close()
+
+
+    requests = []
+
+
+    for row in rows:
+
+        requests.append({
+
+            "id":
+                row["request_id"],
+
+            "skill":
+                row["request_skill"],
+
+            "status":
+                row["request_status"],
+
+            "createdAt":
+                row["created_at"],
+
+            "sender": {
+
+                "id":
+                    row["sender_id"],
+
+                "name":
+                    row["sender_name"],
+
+                "email":
+                    row["sender_email"],
+
+                "skill":
+                    row["sender_skill"] or ""
+
+            }
+
         })
 
-    finally:
-        connection.close()
+
+    return jsonify({
+
+        "success": True,
+
+        "requests":
+            requests
+
+    })
 
 
-@app.route("/api/requests/<int:request_id>", methods=["PUT"])
+# ==========================================
+# ACCEPT / REJECT REQUEST
+# ==========================================
+
+@app.route(
+    "/api/requests/<int:request_id>",
+    methods=["PUT"]
+)
 def update_request(request_id):
 
     data = request.get_json()
 
+
     if not data:
+
         return jsonify({
             "success": False,
-            "message": "No data received."
+            "message":
+                "No data received."
         }), 400
 
-    status = data.get("status", "").strip().lower()
 
-    if status not in ["accepted", "rejected"]:
+    new_status = data.get(
+        "status"
+    )
+
+
+    if new_status not in [
+        "accepted",
+        "rejected"
+    ]:
+
         return jsonify({
             "success": False,
-            "message": "Invalid request status."
+            "message":
+                "Invalid request status."
         }), 400
+
 
     connection = get_connection()
 
-    try:
 
-        existing_request = connection.execute(
-            "SELECT id FROM exchange_requests WHERE id = ?",
-            (request_id,)
-        ).fetchone()
+    existing = connection.execute(
+        """
+        SELECT id
+        FROM requests
+        WHERE id = ?
+        """,
+        (request_id,)
+    ).fetchone()
 
-        if not existing_request:
-            return jsonify({
-                "success": False,
-                "message": "Request not found."
-            }), 404
 
-        connection.execute(
-            """
-            UPDATE exchange_requests
-            SET status = ?
-            WHERE id = ?
-            """,
-            (
-                status,
-                request_id
-            )
-        )
+    if not existing:
 
-        connection.commit()
-
-        return jsonify({
-            "success": True,
-            "message": "Request updated successfully."
-        })
-
-    finally:
         connection.close()
 
+        return jsonify({
+            "success": False,
+            "message":
+                "Request not found."
+        }), 404
 
-if __name__ == "__main__":
 
-    port = int(
-        os.environ.get(
-            "PORT",
-            5000
+    connection.execute(
+        """
+        UPDATE requests
+
+        SET status = ?
+
+        WHERE id = ?
+        """,
+        (
+            new_status,
+            request_id
         )
     )
 
+
+    connection.commit()
+
+    connection.close()
+
+
+    return jsonify({
+
+        "success": True,
+
+        "message":
+            "Request updated successfully.",
+
+        "status":
+            new_status
+
+    })
+
+
+# ==========================================
+# CONNECTIONS
+# ==========================================
+
+@app.route(
+    "/api/connections/<int:user_id>",
+    methods=["GET"]
+)
+def get_connections(user_id):
+
+    connection = get_connection()
+
+
+    rows = connection.execute(
+        """
+        SELECT
+
+            u.id,
+
+            u.name,
+
+            u.email,
+
+            u.skill,
+
+            u.learning_skill
+
+        FROM requests r
+
+        JOIN users u
+
+            ON u.id =
+
+                CASE
+
+                    WHEN r.sender_id = ?
+                    THEN r.receiver_id
+
+                    ELSE r.sender_id
+
+                END
+
+        WHERE
+
+            (
+                r.sender_id = ?
+                OR
+                r.receiver_id = ?
+            )
+
+            AND r.status = 'accepted'
+
+        ORDER BY r.id DESC
+        """,
+        (
+            user_id,
+            user_id,
+            user_id
+        )
+    ).fetchall()
+
+
+    connection.close()
+
+
+    connections = []
+
+
+    for user in rows:
+
+        connections.append({
+
+            "id":
+                user["id"],
+
+            "name":
+                user["name"],
+
+            "email":
+                user["email"],
+
+            "skill":
+                user["skill"] or "",
+
+            "learningSkill":
+                user["learning_skill"] or ""
+
+        })
+
+
+    return jsonify({
+
+        "success": True,
+
+        "connections":
+            connections
+
+    })
+
+
+# ==========================================
+# RUN SERVER
+# ==========================================
+
+if __name__ == "__main__":
+
     app.run(
+
         host="0.0.0.0",
-        port=port
+
+        port=5000,
+
+        debug=True
+
     )
