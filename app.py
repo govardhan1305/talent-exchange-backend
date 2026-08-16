@@ -117,7 +117,7 @@ def signup():
     # Hash password
 
     hashed_password =
-        generate_password_hash(password)
+    generate_password_hash(password)
 
 
     # Insert user
