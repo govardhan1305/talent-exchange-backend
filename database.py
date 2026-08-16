@@ -1,17 +1,11 @@
 import sqlite3
-import os
 
 
 # ==========================================
-# DATABASE PATH
+# DATABASE FILE
 # ==========================================
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-DATABASE_PATH = os.path.join(
-    BASE_DIR,
-    "talent_exchange.db"
-)
+DATABASE_NAME = "talent_exchange.db"
 
 
 # ==========================================
@@ -21,7 +15,7 @@ DATABASE_PATH = os.path.join(
 def get_connection():
 
     connection = sqlite3.connect(
-        DATABASE_PATH
+        DATABASE_NAME
     )
 
     connection.row_factory = sqlite3.Row
@@ -37,7 +31,11 @@ def init_database():
 
     connection = get_connection()
 
+
+    # ======================================
     # USERS TABLE
+    # ======================================
+
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS users (
@@ -54,19 +52,20 @@ def init_database():
 
             learning_skill TEXT DEFAULT '',
 
-            bio TEXT DEFAULT '',
-
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            bio TEXT DEFAULT ''
 
         )
         """
     )
 
 
-    # EXCHANGE REQUESTS TABLE
+    # ======================================
+    # REQUESTS TABLE
+    # ======================================
+
     connection.execute(
         """
-        CREATE TABLE IF NOT EXISTS exchange_requests (
+        CREATE TABLE IF NOT EXISTS requests (
 
             id INTEGER PRIMARY KEY AUTOINCREMENT,
 
@@ -76,17 +75,44 @@ def init_database():
 
             skill TEXT NOT NULL,
 
-            status TEXT DEFAULT 'pending',
+            status TEXT NOT NULL DEFAULT 'pending',
 
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP
+                DEFAULT CURRENT_TIMESTAMP,
 
-            FOREIGN KEY(sender_id)
-                REFERENCES users(id),
+            FOREIGN KEY (
+                sender_id
+            )
+            REFERENCES users(id),
 
-            FOREIGN KEY(receiver_id)
-                REFERENCES users(id)
+            FOREIGN KEY (
+                receiver_id
+            )
+            REFERENCES users(id)
 
         )
+        """
+    )
+
+
+    # ======================================
+    # INDEXES
+    # ======================================
+
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+        idx_requests_sender
+        ON requests(sender_id)
+        """
+    )
+
+
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+        idx_requests_receiver
+        ON requests(receiver_id)
         """
     )
 
@@ -94,16 +120,3 @@ def init_database():
     connection.commit()
 
     connection.close()
-
-
-# ==========================================
-# TEST
-# ==========================================
-
-if __name__ == "__main__":
-
-    init_database()
-
-    print(
-        "Talent Exchange database initialized successfully."
-    )
