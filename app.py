@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
+import os
 
 from database import get_connection, init_database
 
@@ -10,7 +11,10 @@ app = Flask(__name__)
 CORS(app)
 
 
-# Initialize database
+# ==========================================
+# INITIALIZE DATABASE
+# ==========================================
+
 init_database()
 
 
@@ -37,90 +41,68 @@ def signup():
     data = request.get_json()
 
     if not data:
-
         return jsonify({
             "success": False,
             "message": "No data received."
         }), 400
 
-
     name = data.get("name", "").strip()
-
     email = data.get("email", "").strip().lower()
-
     password = data.get("password", "")
 
-
-    # Check fields
-
     if not name or not email or not password:
-
         return jsonify({
             "success": False,
             "message": "All fields are required."
         }), 400
 
-
-    # Password length
-
     if len(password) < 6:
-
         return jsonify({
             "success": False,
             "message": "Password must contain at least 6 characters."
         }), 400
 
-
-    # Check existing user
-
     connection = get_connection()
 
-    existing_user = connection.execute(
-        "SELECT id FROM users WHERE email = ?",
-        (email,)
-    ).fetchone()
+    try:
 
+        existing_user = connection.execute(
+            "SELECT id FROM users WHERE email = ?",
+            (email,)
+        ).fetchone()
 
-    if existing_user:
+        if existing_user:
 
-        connection.close()
+            return jsonify({
+                "success": False,
+                "message": "An account with this email already exists."
+            }), 409
+
+        hashed_password = generate_password_hash(password)
+
+        connection.execute(
+            """
+            INSERT INTO users
+            (name, email, password)
+            VALUES (?, ?, ?)
+            """,
+            (
+                name,
+                email,
+                hashed_password
+            )
+        )
+
+        connection.commit()
 
         return jsonify({
-            "success": False,
-            "message": "An account with this email already exists."
-        }), 409
+            "success": True,
+            "message": "Account created successfully."
+        }), 201
 
+    finally:
 
-    # Hash password
-
-    hashed_password = generate_password_hash(password)
-
-
-    # Insert user
-
-    connection.execute(
-        """
-        INSERT INTO users
-        (name, email, password)
-        VALUES (?, ?, ?)
-        """,
-        (
-            name,
-            email,
-            hashed_password
-        )
-    )
-
-
-    connection.commit()
-
-    connection.close()
-
-
-    return jsonify({
-        "success": True,
-        "message": "Account created successfully."
-    }), 201
+        connection.close()
 
 
 # ==========================================
@@ -133,73 +115,58 @@ def login():
     data = request.get_json()
 
     if not data:
-
         return jsonify({
             "success": False,
             "message": "No data received."
         }), 400
 
-
     email = data.get("email", "").strip().lower()
-
     password = data.get("password", "")
 
-
     if not email or not password:
-
         return jsonify({
             "success": False,
             "message": "Email and password are required."
         }), 400
 
-
     connection = get_connection()
 
+    try:
 
-    user = connection.execute(
-        """
-        SELECT
-            id,
-            name,
-            email,
-            password,
-            skill,
-            learning_skill,
-            bio
-        FROM users
-        WHERE email = ?
-        """,
-        (email,)
-    ).fetchone()
+        user = connection.execute(
+            """
+            SELECT
+                id,
+                name,
+                email,
+                password,
+                skill,
+                learning_skill,
+                bio
+            FROM users
+            WHERE email = ?
+            """,
+            (email,)
+        ).fetchone()
 
+    finally:
 
-    connection.close()
-
-
-    # User not found
+        connection.close()
 
     if not user:
-
         return jsonify({
             "success": False,
             "message": "Invalid email or password."
         }), 401
-
-
-    # Check password
 
     if not check_password_hash(
         user["password"],
         password
     ):
-
         return jsonify({
             "success": False,
             "message": "Invalid email or password."
         }), 401
-
-
-    # Successful login
 
     return jsonify({
 
@@ -220,7 +187,8 @@ def login():
             "learningSkill":
                 user["learning_skill"] or "",
 
-            "bio": user["bio"] or ""
+            "bio":
+                user["bio"] or ""
 
         }
 
@@ -233,8 +201,9 @@ def login():
 
 if __name__ == "__main__":
 
+    port = int(os.environ.get("PORT", 5000))
+
     app.run(
         host="0.0.0.0",
-        port=5000,
-        debug=True
+        port=port
     )
