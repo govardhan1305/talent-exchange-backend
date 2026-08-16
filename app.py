@@ -1,3 +1,4 @@
+```python
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -35,7 +36,8 @@ def home():
     return jsonify({
         "success": True,
         "message": "Talent Exchange Python Backend is running!",
-        "webrtc": True
+        "webrtc": True,
+        "messages": True
     })
 
 
@@ -604,7 +606,10 @@ def update_request(request_id):
 # CONNECTIONS
 # =========================================================
 
-@app.route("/api/connections/<int:user_id>", methods=["GET"])
+@app.route(
+    "/api/connections/<int:user_id>",
+    methods=["GET"]
+)
 def get_connections(user_id):
 
     connection = get_connection()
@@ -664,7 +669,10 @@ def get_connections(user_id):
 # SEND MESSAGE
 # =========================================================
 
-@app.route("/api/messages", methods=["POST"])
+@app.route(
+    "/api/messages",
+    methods=["POST"]
+)
 def send_message():
 
     data = request.get_json()
@@ -684,7 +692,8 @@ def send_message():
 
         return jsonify({
             "success": False,
-            "message": "Sender, receiver and message are required."
+            "message":
+                "Sender, receiver and message are required."
         }), 400
 
     connection = get_connection()
@@ -745,7 +754,10 @@ def send_message():
     "/api/messages/<int:user_id>/<int:other_user_id>",
     methods=["GET"]
 )
-def get_messages(user_id, other_user_id):
+def get_messages(
+    user_id,
+    other_user_id
+):
 
     connection = get_connection()
 
@@ -802,7 +814,10 @@ def get_messages(user_id, other_user_id):
 # WEBRTC — CREATE CALL
 # =========================================================
 
-@app.route("/api/calls", methods=["POST"])
+@app.route(
+    "/api/calls",
+    methods=["POST"]
+)
 def create_call():
 
     data = request.get_json()
@@ -823,7 +838,8 @@ def create_call():
 
         return jsonify({
             "success": False,
-            "message": "Caller, receiver and offer are required."
+            "message":
+                "Caller, receiver and offer are required."
         }), 400
 
     if call_type not in [
@@ -835,6 +851,27 @@ def create_call():
             "success": False,
             "message": "Invalid call type."
         }), 400
+
+    connection = get_connection()
+
+    caller = connection.execute(
+        "SELECT id FROM users WHERE id = ?",
+        (caller_id,)
+    ).fetchone()
+
+    receiver = connection.execute(
+        "SELECT id FROM users WHERE id = ?",
+        (receiver_id,)
+    ).fetchone()
+
+    connection.close()
+
+    if not caller or not receiver:
+
+        return jsonify({
+            "success": False,
+            "message": "Caller or receiver not found."
+        }), 404
 
     call_id = str(uuid.uuid4())
 
@@ -875,7 +912,7 @@ def create_call():
 
 
 # =========================================================
-# WEBRTC — CHECK INCOMING CALLS
+# WEBRTC — INCOMING CALLS
 # =========================================================
 
 @app.route(
@@ -891,13 +928,9 @@ def incoming_calls(user_id):
         for call in calls.values():
 
             if (
-                call["receiverId"]
-                ==
-                int(user_id)
+                call["receiverId"] == int(user_id)
                 and
-                call["status"]
-                ==
-                "ringing"
+                call["status"] == "ringing"
             ):
 
                 result.append({
@@ -926,11 +959,246 @@ def incoming_calls(user_id):
 
 
 # =========================================================
-# WEBRTC — ACCEPT CALL / ANSWER
+# WEBRTC — ANSWER CALL
 # =========================================================
 
 @app.route(
     "/api/calls/<call_id>/answer",
     methods=["POST"]
 )
-def answ
+def answer_call(call_id):
+
+    data = request.get_json()
+
+    if not data:
+
+        return jsonify({
+            "success": False,
+            "message": "No data received."
+        }), 400
+
+    answer = data.get("answer")
+    user_id = data.get("userId")
+
+    if not answer or not user_id:
+
+        return jsonify({
+            "success": False,
+            "message":
+                "Answer and userId are required."
+        }), 400
+
+    with calls_lock:
+
+        call = calls.get(call_id)
+
+        if not call:
+
+            return jsonify({
+                "success": False,
+                "message": "Call not found."
+            }), 404
+
+        if int(user_id) != call["receiverId"]:
+
+            return jsonify({
+                "success": False,
+                "message": "Only receiver can answer."
+            }), 403
+
+        call["answer"] = answer
+
+        call["status"] = "accepted"
+
+    return jsonify({
+        "success": True,
+        "message": "Call accepted."
+    })
+
+
+# =========================================================
+# WEBRTC — GET ANSWER
+# =========================================================
+
+@app.route(
+    "/api/calls/<call_id>/answer",
+    methods=["GET"]
+)
+def get_answer(call_id):
+
+    with calls_lock:
+
+        call = calls.get(call_id)
+
+        if not call:
+
+            return jsonify({
+                "success": False,
+                "message": "Call not found."
+            }), 404
+
+        return jsonify({
+
+            "success": True,
+
+            "answer":
+                call["answer"],
+
+            "status":
+                call["status"]
+
+        })
+
+
+# =========================================================
+# WEBRTC — SEND ICE CANDIDATE
+# =========================================================
+
+@app.route(
+    "/api/calls/<call_id>/candidate",
+    methods=["POST"]
+)
+def add_candidate(call_id):
+
+    data = request.get_json()
+
+    if not data:
+
+        return jsonify({
+            "success": False,
+            "message": "No data received."
+        }), 400
+
+    candidate = data.get("candidate")
+    user_id = data.get("userId")
+
+    if not candidate or not user_id:
+
+        return jsonify({
+            "success": False,
+            "message":
+                "Candidate and userId are required."
+        }), 400
+
+    with calls_lock:
+
+        call = calls.get(call_id)
+
+        if not call:
+
+            return jsonify({
+                "success": False,
+                "message": "Call not found."
+            }), 404
+
+        if int(user_id) == call["callerId"]:
+
+            call["callerCandidates"].append(
+                candidate
+            )
+
+        elif int(user_id) == call["receiverId"]:
+
+            call["receiverCandidates"].append(
+                candidate
+            )
+
+        else:
+
+            return jsonify({
+                "success": False,
+                "message":
+                    "User is not part of this call."
+            }), 403
+
+    return jsonify({
+        "success": True,
+        "message": "Candidate added."
+    })
+
+
+# =========================================================
+# WEBRTC — GET ICE CANDIDATES
+# =========================================================
+
+@app.route(
+    "/api/calls/<call_id>/candidates/<int:user_id>",
+    methods=["GET"]
+)
+def get_candidates(
+    call_id,
+    user_id
+):
+
+    with calls_lock:
+
+        call = calls.get(call_id)
+
+        if not call:
+
+            return jsonify({
+                "success": False,
+                "message": "Call not found."
+            }), 404
+
+        if user_id == call["callerId"]:
+
+            candidates = call["receiverCandidates"]
+
+        elif user_id == call["receiverId"]:
+
+            candidates = call["callerCandidates"]
+
+        else:
+
+            return jsonify({
+                "success": False,
+                "message":
+                    "User is not part of this call."
+            }), 403
+
+    return jsonify({
+        "success": True,
+        "candidates": candidates
+    })
+
+
+# =========================================================
+# WEBRTC — END CALL
+# =========================================================
+
+@app.route(
+    "/api/calls/<call_id>",
+    methods=["DELETE"]
+)
+def end_call(call_id):
+
+    with calls_lock:
+
+        if call_id not in calls:
+
+            return jsonify({
+                "success": False,
+                "message": "Call not found."
+            }), 404
+
+        del calls[call_id]
+
+    return jsonify({
+        "success": True,
+        "message": "Call ended."
+    })
+
+
+# =========================================================
+# RUN SERVER
+# =========================================================
+
+if __name__ == "__main__":
+
+    app.run(
+        host="0.0.0.0",
+        port=5000,
+        debug=True
+    )
+```
