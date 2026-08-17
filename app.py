@@ -77,7 +77,7 @@ def signup():
     connection = get_connection()
 
     existing_user = connection.execute(
-        "SELECT id FROM users WHERE email = %S",
+        "SELECT id FROM users WHERE email = %s",
         (email,)
     ).fetchone()
 
@@ -102,7 +102,7 @@ def signup():
             learning_skill,
             bio
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s)
         """,
         (
             name,
