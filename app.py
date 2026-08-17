@@ -77,7 +77,7 @@ def signup():
     connection = get_connection()
 
     existing_user = connection.execute(
-        "SELECT id FROM users WHERE email = ?",
+        "SELECT id FROM users WHERE email = %S",
         (email,)
     ).fetchone()
 
