@@ -1,145 +1,165 @@
-import sqlite3
+import os
+import psycopg
+from psycopg.rows import dict_row
 
 
-DATABASE_NAME = "talent_exchange.db"
+# ==========================================
+# DATABASE URL
+# ==========================================
 
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+
+# ==========================================
+# GET CONNECTION
+# ==========================================
 
 def get_connection():
 
-    connection = sqlite3.connect(
-        DATABASE_NAME
-    )
+    if not DATABASE_URL:
 
-    connection.row_factory = sqlite3.Row
+        raise Exception(
+            "DATABASE_URL environment variable is missing."
+        )
+
+    connection = psycopg.connect(
+        DATABASE_URL,
+        row_factory=dict_row
+    )
 
     return connection
 
+
+# ==========================================
+# INITIALIZE DATABASE
+# ==========================================
 
 def init_database():
 
     connection = get_connection()
 
+    with connection.cursor() as cursor:
 
-    # ======================================
-    # USERS
-    # ======================================
+        # ======================================
+        # USERS
+        # ======================================
 
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS users (
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
 
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
 
-            name TEXT NOT NULL,
+                name TEXT NOT NULL,
 
-            email TEXT NOT NULL UNIQUE,
+                email TEXT NOT NULL UNIQUE,
 
-            password TEXT NOT NULL,
+                password TEXT NOT NULL,
 
-            skill TEXT DEFAULT '',
+                skill TEXT DEFAULT '',
 
-            learning_skill TEXT DEFAULT '',
+                learning_skill TEXT DEFAULT '',
 
-            bio TEXT DEFAULT ''
+                bio TEXT DEFAULT ''
 
+            )
+            """
         )
-        """
-    )
 
 
-    # ======================================
-    # REQUESTS
-    # ======================================
+        # ======================================
+        # REQUESTS
+        # ======================================
 
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS requests (
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS requests (
 
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
 
-            sender_id INTEGER NOT NULL,
+                sender_id INTEGER NOT NULL,
 
-            receiver_id INTEGER NOT NULL,
+                receiver_id INTEGER NOT NULL,
 
-            skill TEXT NOT NULL,
+                skill TEXT NOT NULL,
 
-            status TEXT NOT NULL DEFAULT 'pending',
+                status TEXT NOT NULL
+                    DEFAULT 'pending',
 
-            created_at TIMESTAMP
-                DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP
+                    DEFAULT CURRENT_TIMESTAMP,
 
-            FOREIGN KEY(sender_id)
-                REFERENCES users(id),
+                FOREIGN KEY (sender_id)
+                    REFERENCES users(id),
 
-            FOREIGN KEY(receiver_id)
-                REFERENCES users(id)
+                FOREIGN KEY (receiver_id)
+                    REFERENCES users(id)
 
+            )
+            """
         )
-        """
-    )
 
 
-    # ======================================
-    # MESSAGES
-    # ======================================
+        # ======================================
+        # MESSAGES
+        # ======================================
 
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS messages (
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS messages (
 
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
 
-            sender_id INTEGER NOT NULL,
+                sender_id INTEGER NOT NULL,
 
-            receiver_id INTEGER NOT NULL,
+                receiver_id INTEGER NOT NULL,
 
-            message TEXT NOT NULL,
+                message TEXT NOT NULL,
 
-            created_at TIMESTAMP
-                DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP
+                    DEFAULT CURRENT_TIMESTAMP,
 
-            FOREIGN KEY(sender_id)
-                REFERENCES users(id),
+                FOREIGN KEY (sender_id)
+                    REFERENCES users(id),
 
-            FOREIGN KEY(receiver_id)
-                REFERENCES users(id)
+                FOREIGN KEY (receiver_id)
+                    REFERENCES users(id)
 
+            )
+            """
         )
-        """
-    )
 
 
-    # ======================================
-    # INDEXES
-    # ======================================
+        # ======================================
+        # INDEXES
+        # ======================================
 
-    connection.execute(
-        """
-        CREATE INDEX IF NOT EXISTS
-        idx_requests_sender
-        ON requests(sender_id)
-        """
-    )
-
-
-    connection.execute(
-        """
-        CREATE INDEX IF NOT EXISTS
-        idx_requests_receiver
-        ON requests(receiver_id)
-        """
-    )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS
+            idx_requests_sender
+            ON requests(sender_id)
+            """
+        )
 
 
-    connection.execute(
-        """
-        CREATE INDEX IF NOT EXISTS
-        idx_messages_sender_receiver
-        ON messages(sender_id, receiver_id)
-        """
-    )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS
+            idx_requests_receiver
+            ON requests(receiver_id)
+            """
+        )
+
+
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS
+            idx_messages_sender_receiver
+            ON messages(sender_id, receiver_id)
+            """
+        )
 
 
     connection.commit()
-
     connection.close()
