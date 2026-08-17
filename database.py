@@ -17,7 +17,6 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 def get_connection():
 
     if not DATABASE_URL:
-
         raise Exception(
             "DATABASE_URL environment variable is missing."
         )
@@ -41,7 +40,7 @@ def init_database():
     with connection.cursor() as cursor:
 
         # ======================================
-        # USERS
+        # USERS TABLE
         # ======================================
 
         cursor.execute(
@@ -66,9 +65,8 @@ def init_database():
             """
         )
 
-
         # ======================================
-        # REQUESTS
+        # REQUESTS TABLE
         # ======================================
 
         cursor.execute(
@@ -99,9 +97,8 @@ def init_database():
             """
         )
 
-
         # ======================================
-        # MESSAGES
+        # MESSAGES TABLE
         # ======================================
 
         cursor.execute(
@@ -129,9 +126,8 @@ def init_database():
             """
         )
 
-
         # ======================================
-        # INDEXES
+        # REQUEST INDEXES
         # ======================================
 
         cursor.execute(
@@ -142,7 +138,6 @@ def init_database():
             """
         )
 
-
         cursor.execute(
             """
             CREATE INDEX IF NOT EXISTS
@@ -151,6 +146,9 @@ def init_database():
             """
         )
 
+        # ======================================
+        # MESSAGE INDEX
+        # ======================================
 
         cursor.execute(
             """
@@ -159,7 +157,6 @@ def init_database():
             ON messages(sender_id, receiver_id)
             """
         )
-
 
     connection.commit()
     connection.close()
