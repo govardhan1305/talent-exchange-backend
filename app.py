@@ -1,4 +1,6 @@
 import os
+import time
+import threading
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -18,7 +20,14 @@ from werkzeug.security import (
 
 app = Flask(__name__)
 
-CORS(app)
+CORS(
+    app,
+    resources={
+        r"/api/*": {
+            "origins": "*"
+        }
+    }
+)
 
 
 # =========================================================
@@ -98,11 +107,9 @@ def init_database():
 
                     skill TEXT NOT NULL,
 
-                    status TEXT NOT NULL
-                        DEFAULT 'pending',
+                    status TEXT NOT NULL DEFAULT 'pending',
 
-                    created_at TIMESTAMP
-                        DEFAULT CURRENT_TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
                     FOREIGN KEY (sender_id)
                         REFERENCES users(id)
@@ -133,8 +140,7 @@ def init_database():
 
                     message TEXT NOT NULL,
 
-                    created_at TIMESTAMP
-                        DEFAULT CURRENT_TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
                     FOREIGN KEY (sender_id)
                         REFERENCES users(id)
@@ -163,8 +169,7 @@ def init_database():
 
                     user2_id INTEGER NOT NULL,
 
-                    created_at TIMESTAMP
-                        DEFAULT CURRENT_TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
                     FOREIGN KEY (user1_id)
                         REFERENCES users(id)
@@ -175,6 +180,85 @@ def init_database():
                         ON DELETE CASCADE,
 
                     UNIQUE(user1_id, user2_id)
+
+                )
+                """
+            )
+
+
+            # =================================================
+            # WEBRTC SIGNALING
+            # =================================================
+            #
+            # Stores temporary:
+            #
+            # offer
+            # answer
+            # ICE candidates
+            #
+            # The backend does NOT carry audio/video.
+            #
+            # WebRTC sends the actual media directly between
+            # the browsers when possible.
+            #
+            # =================================================
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS call_signals (
+
+                    id SERIAL PRIMARY KEY,
+
+                    caller_id INTEGER NOT NULL,
+
+                    receiver_id INTEGER NOT NULL,
+
+                    signal_type TEXT NOT NULL,
+
+                    signal_data TEXT NOT NULL,
+
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                    FOREIGN KEY (caller_id)
+                        REFERENCES users(id)
+                        ON DELETE CASCADE,
+
+                    FOREIGN KEY (receiver_id)
+                        REFERENCES users(id)
+                        ON DELETE CASCADE
+
+                )
+                """
+            )
+
+
+            # =================================================
+            # CALL STATUS
+            # =================================================
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS calls (
+
+                    id SERIAL PRIMARY KEY,
+
+                    caller_id INTEGER NOT NULL,
+
+                    receiver_id INTEGER NOT NULL,
+
+                    call_type TEXT NOT NULL,
+
+                    status TEXT NOT NULL DEFAULT 'ringing',
+
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                    FOREIGN KEY (caller_id)
+                        REFERENCES users(id)
+                        ON DELETE CASCADE,
+
+                    FOREIGN KEY (receiver_id)
+                        REFERENCES users(id)
+                        ON DELETE CASCADE
 
                 )
                 """
@@ -239,7 +323,39 @@ def init_database():
             )
 
 
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS
+                idx_call_signals_receiver
+                ON call_signals(receiver_id)
+                """
+            )
+
+
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS
+                idx_call_signals_pair
+                ON call_signals(caller_id, receiver_id)
+                """
+            )
+
+
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS
+                idx_calls_receiver
+                ON calls(receiver_id)
+                """
+            )
+
+
         connection.commit()
+
+        print(
+            "DATABASE INITIALIZED SUCCESSFULLY"
+        )
+
 
     except Exception as e:
 
@@ -252,6 +368,7 @@ def init_database():
             connection.rollback()
 
         raise
+
 
     finally:
 
@@ -271,7 +388,21 @@ def home():
         "success": True,
 
         "message":
-        "Talent Exchange Python Backend is running!"
+        "Talent Exchange Python Backend is running!",
+
+        "version":
+        "2.0",
+
+        "features": [
+            "authentication",
+            "users",
+            "requests",
+            "connections",
+            "messages",
+            "webrtc-signaling",
+            "audio-calls",
+            "video-calls"
+        ]
 
     })
 
@@ -405,10 +536,6 @@ def signup():
         ).strip()
 
 
-        # -----------------------------------------------------
-        # VALIDATION
-        # -----------------------------------------------------
-
         if not name:
 
             return jsonify({
@@ -474,10 +601,6 @@ def signup():
 
         with connection.cursor() as cursor:
 
-            # -------------------------------------------------
-            # CHECK EMAIL
-            # -------------------------------------------------
-
             cursor.execute(
                 """
                 SELECT id
@@ -505,18 +628,10 @@ def signup():
                 }), 409
 
 
-            # -------------------------------------------------
-            # HASH PASSWORD
-            # -------------------------------------------------
-
             hashed_password = generate_password_hash(
                 password
             )
 
-
-            # -------------------------------------------------
-            # CREATE USER
-            # -------------------------------------------------
 
             cursor.execute(
                 """
@@ -722,13 +837,8 @@ def login():
 
             stored_password = user["password"]
 
-
             password_correct = False
 
-
-            # -------------------------------------------------
-            # HASHED PASSWORD
-            # -------------------------------------------------
 
             if (
                 stored_password.startswith("pbkdf2:")
@@ -741,10 +851,6 @@ def login():
                     password
                 )
 
-
-            # -------------------------------------------------
-            # OLD PASSWORD COMPATIBILITY
-            # -------------------------------------------------
 
             else:
 
@@ -763,7 +869,9 @@ def login():
                     cursor.execute(
                         """
                         UPDATE users
+
                         SET password = %s
+
                         WHERE id = %s
                         """,
 
@@ -1065,71 +1173,90 @@ def create_request():
 
         with connection.cursor() as cursor:
 
-            # -------------------------------------------------
-            # CHECK SENDER
-            # -------------------------------------------------
+            # Check users
 
             cursor.execute(
                 """
                 SELECT id
                 FROM users
-                WHERE id = %s
+                WHERE id IN (%s, %s)
                 """,
-                (sender_id,)
+
+                (
+                    sender_id,
+                    receiver_id
+                )
             )
 
 
-            sender = cursor.fetchone()
+            users = cursor.fetchall()
 
 
-            if not sender:
+            if len(users) != 2:
+
+                connection.rollback()
 
                 return jsonify({
 
                     "success": False,
 
                     "message":
-                    "Sender not found."
+                    "Sender or receiver not found."
 
                 }), 404
 
 
-            # -------------------------------------------------
-            # CHECK RECEIVER
-            # -------------------------------------------------
+            # Check existing connection
+
+            user1 = min(
+                sender_id,
+                receiver_id
+            )
+
+            user2 = max(
+                sender_id,
+                receiver_id
+            )
+
 
             cursor.execute(
                 """
                 SELECT id
-                FROM users
-                WHERE id = %s
+
+                FROM connections
+
+                WHERE user1_id = %s
+                AND user2_id = %s
                 """,
-                (receiver_id,)
+
+                (
+                    user1,
+                    user2
+                )
             )
 
 
-            receiver = cursor.fetchone()
+            already_connected = cursor.fetchone()
 
 
-            if not receiver:
+            if already_connected:
 
                 return jsonify({
 
                     "success": False,
 
                     "message":
-                    "Receiver not found."
+                    "You are already connected with this user."
 
-                }), 404
+                }), 409
 
 
-            # -------------------------------------------------
-            # CHECK EXISTING PENDING REQUEST
-            # -------------------------------------------------
+            # Check same pending request
 
             cursor.execute(
                 """
                 SELECT id
+
                 FROM requests
 
                 WHERE sender_id = %s
@@ -1162,13 +1289,12 @@ def create_request():
                 }), 409
 
 
-            # -------------------------------------------------
-            # CHECK REVERSE PENDING REQUEST
-            # -------------------------------------------------
+            # Check reverse request
 
             cursor.execute(
                 """
                 SELECT id
+
                 FROM requests
 
                 WHERE sender_id = %s
@@ -1200,10 +1326,6 @@ def create_request():
 
                 }), 409
 
-
-            # -------------------------------------------------
-            # CREATE REQUEST
-            # -------------------------------------------------
 
             cursor.execute(
                 """
@@ -1289,7 +1411,7 @@ def create_request():
 
 
 # =========================================================
-# GET RECEIVED REQUESTS
+# RECEIVED REQUESTS
 # =========================================================
 
 @app.route(
@@ -1312,25 +1434,16 @@ def get_received_requests(user_id):
                 SELECT
 
                     r.id,
-
                     r.sender_id,
-
                     r.receiver_id,
-
                     r.skill,
-
                     r.status,
-
                     r.created_at,
 
                     u.name AS sender_name,
-
                     u.email AS sender_email,
-
                     u.skill AS sender_skill,
-
                     u.learning_skill AS sender_learning_skill,
-
                     u.bio AS sender_bio
 
                 FROM requests r
@@ -1385,7 +1498,7 @@ def get_received_requests(user_id):
 
 
 # =========================================================
-# GET SENT REQUESTS
+# SENT REQUESTS
 # =========================================================
 
 @app.route(
@@ -1408,25 +1521,16 @@ def get_sent_requests(user_id):
                 SELECT
 
                     r.id,
-
                     r.sender_id,
-
                     r.receiver_id,
-
                     r.skill,
-
                     r.status,
-
                     r.created_at,
 
                     u.name AS receiver_name,
-
                     u.email AS receiver_email,
-
                     u.skill AS receiver_skill,
-
                     u.learning_skill AS receiver_learning_skill,
-
                     u.bio AS receiver_bio
 
                 FROM requests r
@@ -1458,12 +1562,6 @@ def get_sent_requests(user_id):
 
     except Exception as e:
 
-        print(
-            "SENT REQUESTS ERROR:",
-            repr(e)
-        )
-
-
         return jsonify({
 
             "success": False,
@@ -1481,7 +1579,7 @@ def get_sent_requests(user_id):
 
 
 # =========================================================
-# GET ALL REQUESTS FOR USER
+# ALL REQUESTS FOR USER
 # =========================================================
 
 @app.route(
@@ -1504,23 +1602,16 @@ def get_user_requests(user_id):
                 SELECT
 
                     r.id,
-
                     r.sender_id,
-
                     r.receiver_id,
-
                     r.skill,
-
                     r.status,
-
                     r.created_at,
 
                     sender.name AS sender_name,
-
                     sender.email AS sender_email,
 
                     receiver.name AS receiver_name,
-
                     receiver.email AS receiver_email
 
                 FROM requests r
@@ -1601,23 +1692,16 @@ def get_request(request_id):
                 SELECT
 
                     r.id,
-
                     r.sender_id,
-
                     r.receiver_id,
-
                     r.skill,
-
                     r.status,
-
                     r.created_at,
 
                     sender.name AS sender_name,
-
                     sender.email AS sender_email,
 
                     receiver.name AS receiver_name,
-
                     receiver.email AS receiver_email
 
                 FROM requests r
@@ -1681,19 +1765,6 @@ def get_request(request_id):
 # =========================================================
 # ACCEPT REQUEST
 # =========================================================
-#
-# IMPORTANT:
-#
-# Frontend only needs to send:
-#
-# POST /api/requests/<REQUEST_ID>/accept
-#
-# The backend finds the real sender and receiver from
-# the request itself.
-#
-# This fixes the Rahul -> Accept problem.
-#
-# =========================================================
 
 @app.route(
     "/api/requests/<int:request_id>/accept",
@@ -1710,24 +1781,15 @@ def accept_request(request_id):
 
         with connection.cursor() as cursor:
 
-            # -------------------------------------------------
-            # FIND REQUEST
-            # -------------------------------------------------
-
             cursor.execute(
                 """
                 SELECT
 
                     id,
-
                     sender_id,
-
                     receiver_id,
-
                     skill,
-
                     status,
-
                     created_at
 
                 FROM requests
@@ -1762,29 +1824,90 @@ def accept_request(request_id):
                 req["sender_id"]
             )
 
-
             receiver_id = int(
                 req["receiver_id"]
             )
 
 
-            # -------------------------------------------------
-            # ALREADY ACCEPTED
-            # -------------------------------------------------
+            user1 = min(
+                sender_id,
+                receiver_id
+            )
+
+            user2 = max(
+                sender_id,
+                receiver_id
+            )
+
 
             if req["status"] == "accepted":
 
-                # Make sure connection exists
+                cursor.execute(
+                    """
+                    INSERT INTO connections
+                    (
+                        user1_id,
+                        user2_id
+                    )
 
-                user1 = min(
-                    sender_id,
-                    receiver_id
+                    VALUES
+                    (
+                        %s,
+                        %s
+                    )
+
+                    ON CONFLICT
+                    (user1_id, user2_id)
+                    DO NOTHING
+                    """,
+
+                    (
+                        user1,
+                        user2
+                    )
                 )
 
-                user2 = max(
-                    sender_id,
-                    receiver_id
+
+            elif req["status"] != "pending":
+
+                connection.rollback()
+
+                return jsonify({
+
+                    "success": False,
+
+                    "message":
+                    "Request is already " +
+                    str(req["status"]) +
+                    "."
+
+                }), 409
+
+
+            else:
+
+                cursor.execute(
+                    """
+                    UPDATE requests
+
+                    SET status = 'accepted'
+
+                    WHERE id = %s
+
+                    RETURNING
+                        id,
+                        sender_id,
+                        receiver_id,
+                        skill,
+                        status,
+                        created_at
+                    """,
+
+                    (request_id,)
                 )
+
+
+                req = cursor.fetchone()
 
 
                 cursor.execute(
@@ -1813,156 +1936,13 @@ def accept_request(request_id):
                 )
 
 
-                connection.commit()
-
-
-                cursor.execute(
-                    """
-                    SELECT
-                        id,
-                        user1_id,
-                        user2_id,
-                        created_at
-
-                    FROM connections
-
-                    WHERE user1_id = %s
-                    AND user2_id = %s
-                    """,
-
-                    (
-                        user1,
-                        user2
-                    )
-                )
-
-
-                connection_data = cursor.fetchone()
-
-
-                return jsonify({
-
-                    "success": True,
-
-                    "message":
-                    "Request was already accepted.",
-
-                    "request_id":
-                    request_id,
-
-                    "status":
-                    "accepted",
-
-                    "connection":
-                    connection_data
-
-                })
-
-
-            # -------------------------------------------------
-            # ONLY PENDING CAN BE ACCEPTED
-            # -------------------------------------------------
-
-            if req["status"] != "pending":
-
-                connection.rollback()
-
-                return jsonify({
-
-                    "success": False,
-
-                    "message":
-                    "Request is already " +
-                    str(req["status"]) +
-                    "."
-
-                }), 409
-
-
-            # -------------------------------------------------
-            # UPDATE REQUEST
-            # -------------------------------------------------
-
-            cursor.execute(
-                """
-                UPDATE requests
-
-                SET status = 'accepted'
-
-                WHERE id = %s
-
-                RETURNING
-                    id,
-                    sender_id,
-                    receiver_id,
-                    skill,
-                    status,
-                    created_at
-                """,
-
-                (request_id,)
-            )
-
-
-            updated_request = cursor.fetchone()
-
-
-            # -------------------------------------------------
-            # CREATE CONNECTION
-            # -------------------------------------------------
-
-            user1 = min(
-                sender_id,
-                receiver_id
-            )
-
-
-            user2 = max(
-                sender_id,
-                receiver_id
-            )
-
-
-            cursor.execute(
-                """
-                INSERT INTO connections
-                (
-                    user1_id,
-                    user2_id
-                )
-
-                VALUES
-                (
-                    %s,
-                    %s
-                )
-
-                ON CONFLICT
-                (user1_id, user2_id)
-                DO NOTHING
-                """,
-
-                (
-                    user1,
-                    user2
-                )
-            )
-
-
-            # -------------------------------------------------
-            # GET CONNECTION
-            # -------------------------------------------------
-
             cursor.execute(
                 """
                 SELECT
 
                     id,
-
                     user1_id,
-
                     user2_id,
-
                     created_at
 
                 FROM connections
@@ -1982,47 +1962,6 @@ def accept_request(request_id):
             connection_data = cursor.fetchone()
 
 
-            # -------------------------------------------------
-            # GET USERS
-            # -------------------------------------------------
-
-            cursor.execute(
-                """
-                SELECT
-
-                    id,
-
-                    name,
-
-                    email,
-
-                    skill,
-
-                    learning_skill,
-
-                    bio
-
-                FROM users
-
-                WHERE id IN (%s, %s)
-
-                ORDER BY id
-                """,
-
-                (
-                    sender_id,
-                    receiver_id
-                )
-            )
-
-
-            users = cursor.fetchall()
-
-
-        # -----------------------------------------------------
-        # COMMIT EVERYTHING
-        # -----------------------------------------------------
-
         connection.commit()
 
 
@@ -2034,13 +1973,10 @@ def accept_request(request_id):
             "Request accepted successfully!",
 
             "request":
-            updated_request,
+            req,
 
             "connection":
-            connection_data,
-
-            "users":
-            users
+            connection_data
 
         })
 
@@ -2189,12 +2125,6 @@ def reject_request(request_id):
             connection.rollback()
 
 
-        print(
-            "REJECT REQUEST ERROR:",
-            repr(e)
-        )
-
-
         return jsonify({
 
             "success": False,
@@ -2213,7 +2143,7 @@ def reject_request(request_id):
 
 
 # =========================================================
-# DELETE / CANCEL REQUEST
+# DELETE REQUEST
 # =========================================================
 
 @app.route(
@@ -2320,27 +2250,18 @@ def get_connections(user_id):
                 SELECT
 
                     c.id,
-
                     c.user1_id,
-
                     c.user2_id,
-
                     c.created_at,
 
                     u1.name AS user1_name,
-
                     u1.email AS user1_email,
-
                     u1.skill AS user1_skill,
-
                     u1.learning_skill AS user1_learning_skill,
 
                     u2.name AS user2_name,
-
                     u2.email AS user2_email,
-
                     u2.skill AS user2_skill,
-
                     u2.learning_skill AS user2_learning_skill
 
                 FROM connections c
@@ -2377,13 +2298,9 @@ def get_connections(user_id):
             if row["user1_id"] == user_id:
 
                 other_id = row["user2_id"]
-
                 other_name = row["user2_name"]
-
                 other_email = row["user2_email"]
-
                 other_skill = row["user2_skill"]
-
                 other_learning_skill = (
                     row["user2_learning_skill"]
                 )
@@ -2391,13 +2308,9 @@ def get_connections(user_id):
             else:
 
                 other_id = row["user1_id"]
-
                 other_name = row["user1_name"]
-
                 other_email = row["user1_email"]
-
                 other_skill = row["user1_skill"]
-
                 other_learning_skill = (
                     row["user1_learning_skill"]
                 )
@@ -2511,7 +2424,6 @@ def check_connection():
             user2_id
         )
 
-
         user2 = max(
             user1_id,
             user2_id
@@ -2528,11 +2440,8 @@ def check_connection():
                 SELECT
 
                     id,
-
                     user1_id,
-
                     user2_id,
-
                     created_at
 
                 FROM connections
@@ -2606,11 +2515,9 @@ def send_message():
             "sender_id"
         )
 
-
         receiver_id = data.get(
             "receiver_id"
         )
-
 
         message = str(
             data.get(
@@ -2643,14 +2550,22 @@ def send_message():
         receiver_id = int(receiver_id)
 
 
+        if sender_id == receiver_id:
+
+            return jsonify({
+
+                "success": False,
+
+                "message":
+                "You cannot message yourself."
+
+            }), 400
+
+
         connection = get_connection()
 
 
         with connection.cursor() as cursor:
-
-            # -------------------------------------------------
-            # CHECK CONNECTION
-            # -------------------------------------------------
 
             user1 = min(
                 sender_id,
@@ -2695,10 +2610,6 @@ def send_message():
 
                 }), 403
 
-
-            # -------------------------------------------------
-            # INSERT MESSAGE
-            # -------------------------------------------------
 
             cursor.execute(
                 """
@@ -2801,13 +2712,9 @@ def get_messages(user1_id, user2_id):
                 SELECT
 
                     m.id,
-
                     m.sender_id,
-
                     m.receiver_id,
-
                     m.message,
-
                     m.created_at,
 
                     sender.name AS sender_name,
@@ -2870,6 +2777,927 @@ def get_messages(user1_id, user2_id):
             "success": False,
 
             "message":
+            str(e)
+
+        }), 500
+
+
+    finally:
+
+        if connection:
+            connection.close()
+
+
+# =========================================================
+# WEBRTC HELPER
+# =========================================================
+
+def verify_connection(
+    user1_id,
+    user2_id,
+    cursor
+):
+
+    first = min(
+        int(user1_id),
+        int(user2_id)
+    )
+
+    second = max(
+        int(user1_id),
+        int(user2_id)
+    )
+
+
+    cursor.execute(
+        """
+        SELECT id
+
+        FROM connections
+
+        WHERE user1_id = %s
+
+        AND user2_id = %s
+        """,
+
+        (
+            first,
+            second
+        )
+    )
+
+
+    return cursor.fetchone() is not None
+
+
+# =========================================================
+# WEBRTC SEND SIGNAL
+# =========================================================
+#
+# Frontend sends:
+#
+# {
+#   "caller_id": 1,
+#   "receiver_id": 2,
+#   "signal_type": "offer",
+#   "signal_data": "{...}"
+# }
+#
+# signal_type can be:
+#
+# offer
+# answer
+# ice-candidate
+# hangup
+#
+# =========================================================
+
+@app.route(
+    "/api/call/signal",
+    methods=["POST"]
+)
+def send_call_signal():
+
+    connection = None
+
+    try:
+
+        data = request.get_json(
+            silent=True
+        ) or {}
+
+
+        caller_id = data.get(
+            "caller_id"
+        )
+
+        receiver_id = data.get(
+            "receiver_id"
+        )
+
+        signal_type = str(
+            data.get(
+                "signal_type",
+                ""
+            )
+        ).strip().lower()
+
+
+        signal_data = data.get(
+            "signal_data"
+        )
+
+
+        if (
+            caller_id is None
+            or
+            receiver_id is None
+            or
+            not signal_type
+            or
+            signal_data is None
+        ):
+
+            return jsonify({
+
+                "success": False,
+
+                "message":
+                "caller_id, receiver_id, signal_type and signal_data are required."
+
+            }), 400
+
+
+        caller_id = int(
+            caller_id
+        )
+
+        receiver_id = int(
+            receiver_id
+        )
+
+
+        if caller_id == receiver_id:
+
+            return jsonify({
+
+                "success": False,
+
+                "message":
+                "You cannot call yourself."
+
+            }), 400
+
+
+        allowed_types = {
+
+            "offer",
+            "answer",
+            "ice-candidate",
+            "hangup"
+
+        }
+
+
+        if signal_type not in allowed_types:
+
+            return jsonify({
+
+                "success": False,
+
+                "message":
+                "Invalid signal_type."
+
+            }), 400
+
+
+        connection = get_connection()
+
+
+        with connection.cursor() as cursor:
+
+            connected = verify_connection(
+                caller_id,
+                receiver_id,
+                cursor
+            )
+
+
+            if not connected:
+
+                return jsonify({
+
+                    "success": False,
+
+                    "message":
+                    "Users are not connected."
+
+                }), 403
+
+
+            # Convert object to JSON string if necessary
+
+            if not isinstance(
+                signal_data,
+                str
+            ):
+
+                import json
+
+                signal_data = json.dumps(
+                    signal_data
+                )
+
+
+            cursor.execute(
+                """
+                INSERT INTO call_signals
+                (
+                    caller_id,
+                    receiver_id,
+                    signal_type,
+                    signal_data
+                )
+
+                VALUES
+                (
+                    %s,
+                    %s,
+                    %s,
+                    %s
+                )
+
+                RETURNING
+
+                    id,
+                    caller_id,
+                    receiver_id,
+                    signal_type,
+                    signal_data,
+                    created_at
+                """,
+
+                (
+                    caller_id,
+                    receiver_id,
+                    signal_type,
+                    signal_data
+                )
+            )
+
+
+            signal = cursor.fetchone()
+
+
+        connection.commit()
+
+
+        return jsonify({
+
+            "success": True,
+
+            "message":
+            "Call signal sent.",
+
+            "signal":
+            signal
+
+        }), 201
+
+
+    except Exception as e:
+
+        if connection:
+            connection.rollback()
+
+
+        print(
+            "SEND CALL SIGNAL ERROR:",
+            repr(e)
+        )
+
+
+        return jsonify({
+
+            "success": False,
+
+            "message":
+            "Call signal failed: " +
+            str(e)
+
+        }), 500
+
+
+    finally:
+
+        if connection:
+            connection.close()
+
+
+# =========================================================
+# GET WEBRTC SIGNALS
+# =========================================================
+#
+# Receiver asks:
+#
+# /api/call/signals/2
+#
+# The endpoint returns signals waiting for user 2.
+#
+# =========================================================
+
+@app.route(
+    "/api/call/signals/<int:user_id>",
+    methods=["GET"]
+)
+def get_call_signals(user_id):
+
+    connection = None
+
+    try:
+
+        after_id = request.args.get(
+            "after_id",
+            "0"
+        )
+
+
+        try:
+
+            after_id = int(
+                after_id
+            )
+
+        except:
+
+            after_id = 0
+
+
+        connection = get_connection()
+
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+
+                    id,
+                    caller_id,
+                    receiver_id,
+                    signal_type,
+                    signal_data,
+                    created_at
+
+                FROM call_signals
+
+                WHERE receiver_id = %s
+
+                AND id > %s
+
+                ORDER BY id ASC
+
+                LIMIT 100
+                """,
+
+                (
+                    user_id,
+                    after_id
+                )
+            )
+
+
+            signals = cursor.fetchall()
+
+
+        return jsonify({
+
+            "success": True,
+
+            "signals":
+            signals
+
+        })
+
+
+    except Exception as e:
+
+        print(
+            "GET CALL SIGNALS ERROR:",
+            repr(e)
+        )
+
+
+        return jsonify({
+
+            "success": False,
+
+            "message":
+            str(e)
+
+        }), 500
+
+
+    finally:
+
+        if connection:
+            connection.close()
+
+
+# =========================================================
+# DELETE OLD SIGNALS
+# =========================================================
+
+@app.route(
+    "/api/call/signals/cleanup",
+    methods=["POST"]
+)
+def cleanup_call_signals():
+
+    connection = None
+
+    try:
+
+        connection = get_connection()
+
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                DELETE FROM call_signals
+
+                WHERE created_at <
+                    CURRENT_TIMESTAMP - INTERVAL '10 minutes'
+                """
+            )
+
+
+            deleted_count = cursor.rowcount
+
+
+        connection.commit()
+
+
+        return jsonify({
+
+            "success": True,
+
+            "deleted":
+            deleted_count
+
+        })
+
+
+    except Exception as e:
+
+        if connection:
+            connection.rollback()
+
+
+        return jsonify({
+
+            "success": False,
+
+            "message":
+            str(e)
+
+        }), 500
+
+
+    finally:
+
+        if connection:
+            connection.close()
+
+
+# =========================================================
+# START CALL
+# =========================================================
+#
+# call_type:
+#
+# audio
+# video
+#
+# =========================================================
+
+@app.route(
+    "/api/call/start",
+    methods=["POST"]
+)
+def start_call():
+
+    connection = None
+
+    try:
+
+        data = request.get_json(
+            silent=True
+        ) or {}
+
+
+        caller_id = data.get(
+            "caller_id"
+        )
+
+        receiver_id = data.get(
+            "receiver_id"
+        )
+
+        call_type = str(
+            data.get(
+                "call_type",
+                "video"
+            )
+        ).strip().lower()
+
+
+        if (
+            caller_id is None
+            or
+            receiver_id is None
+        ):
+
+            return jsonify({
+
+                "success": False,
+
+                "message":
+                "caller_id and receiver_id are required."
+
+            }), 400
+
+
+        caller_id = int(
+            caller_id
+        )
+
+        receiver_id = int(
+            receiver_id
+        )
+
+
+        if call_type not in (
+            "audio",
+            "video"
+        ):
+
+            return jsonify({
+
+                "success": False,
+
+                "message":
+                "call_type must be audio or video."
+
+            }), 400
+
+
+        if caller_id == receiver_id:
+
+            return jsonify({
+
+                "success": False,
+
+                "message":
+                "You cannot call yourself."
+
+            }), 400
+
+
+        connection = get_connection()
+
+
+        with connection.cursor() as cursor:
+
+            connected = verify_connection(
+                caller_id,
+                receiver_id,
+                cursor
+            )
+
+
+            if not connected:
+
+                return jsonify({
+
+                    "success": False,
+
+                    "message":
+                    "Users are not connected."
+
+                }), 403
+
+
+            # End old ringing calls between these users
+
+            cursor.execute(
+                """
+                UPDATE calls
+
+                SET status = 'ended'
+
+                WHERE
+                (
+                    caller_id = %s
+                    AND
+                    receiver_id = %s
+                )
+
+                OR
+
+                (
+                    caller_id = %s
+                    AND
+                    receiver_id = %s
+                )
+
+                AND status = 'ringing'
+                """,
+
+                (
+                    caller_id,
+                    receiver_id,
+                    receiver_id,
+                    caller_id
+                )
+            )
+
+
+            cursor.execute(
+                """
+                INSERT INTO calls
+                (
+                    caller_id,
+                    receiver_id,
+                    call_type,
+                    status
+                )
+
+                VALUES
+                (
+                    %s,
+                    %s,
+                    %s,
+                    'ringing'
+                )
+
+                RETURNING
+
+                    id,
+                    caller_id,
+                    receiver_id,
+                    call_type,
+                    status,
+                    created_at
+                """,
+
+                (
+                    caller_id,
+                    receiver_id,
+                    call_type
+                )
+            )
+
+
+            call = cursor.fetchone()
+
+
+        connection.commit()
+
+
+        return jsonify({
+
+            "success": True,
+
+            "message":
+            "Call started.",
+
+            "call":
+            call
+
+        }), 201
+
+
+    except Exception as e:
+
+        if connection:
+            connection.rollback()
+
+
+        print(
+            "START CALL ERROR:",
+            repr(e)
+        )
+
+
+        return jsonify({
+
+            "success": False,
+
+            "message":
+            "Could not start call: " +
+            str(e)
+
+        }), 500
+
+
+    finally:
+
+        if connection:
+            connection.close()
+
+
+# =========================================================
+# GET INCOMING CALLS
+# =========================================================
+
+@app.route(
+    "/api/call/incoming/<int:user_id>",
+    methods=["GET"]
+)
+def get_incoming_calls(user_id):
+
+    connection = None
+
+    try:
+
+        connection = get_connection()
+
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+
+                    c.id,
+
+                    c.caller_id,
+
+                    c.receiver_id,
+
+                    c.call_type,
+
+                    c.status,
+
+                    c.created_at,
+
+                    u.name AS caller_name,
+
+                    u.email AS caller_email
+
+                FROM calls c
+
+                JOIN users u
+                    ON u.id = c.caller_id
+
+                WHERE c.receiver_id = %s
+
+                AND c.status = 'ringing'
+
+                ORDER BY c.id DESC
+
+                LIMIT 10
+                """,
+
+                (user_id,)
+            )
+
+
+            calls = cursor.fetchall()
+
+
+        return jsonify({
+
+            "success": True,
+
+            "calls":
+            calls
+
+        })
+
+
+    except Exception as e:
+
+        return jsonify({
+
+            "success": False,
+
+            "message":
+            str(e)
+
+        }), 500
+
+
+    finally:
+
+        if connection:
+            connection.close()
+
+
+# =========================================================
+# UPDATE CALL STATUS
+# =========================================================
+
+@app.route(
+    "/api/call/<int:call_id>/status",
+    methods=["POST", "PUT"]
+)
+def update_call_status(call_id):
+
+    connection = None
+
+    try:
+
+        data = request.get_json(
+            silent=True
+        ) or {}
+
+
+        status = str(
+            data.get(
+                "status",
+                ""
+            )
+        ).strip().lower()
+
+
+        allowed_statuses = {
+
+            "ringing",
+            "accepted",
+            "rejected",
+            "ended",
+            "busy"
+
+        }
+
+
+        if status not in allowed_statuses:
+
+            return jsonify({
+
+                "success": False,
+
+                "message":
+                "Invalid call status."
+
+            }), 400
+
+
+        connection = get_connection()
+
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                UPDATE calls
+
+                SET status = %s
+
+                WHERE id = %s
+
+                RETURNING
+
+                    id,
+                    caller_id,
+                    receiver_id,
+                    call_type,
+                    status,
+                    created_at
+                """,
+
+                (
+                    status,
+                    call_id
+                )
+            )
+
+
+            call = cursor.fetchone()
+
+
+            if not call:
+
+                connection.rollback()
+
+                return jsonify({
+
+                    "success": False,
+
+                    "message":
+                    "Call not found."
+
+                }), 404
+
+
+        connection.commit()
+
+
+        return jsonify({
+
+            "success": True,
+
+            "call":
+            call
+
+        })
+
+
+    except Exception as e:
+
+        if connection:
+            connection.rollback()
+
+
+        return jsonify({
+
+            "success": False,
+
+            "message":
+            "Call status update failed: " +
             str(e)
 
         }), 500
@@ -3009,16 +3837,49 @@ def internal_error(error):
 
 
 # =========================================================
+# PERIODIC SIGNAL CLEANUP
+# =========================================================
+
+def cleanup_loop():
+
+    while True:
+
+        try:
+
+            connection = get_connection()
+
+            with connection.cursor() as cursor:
+
+                cursor.execute(
+                    """
+                    DELETE FROM call_signals
+
+                    WHERE created_at <
+                        CURRENT_TIMESTAMP - INTERVAL '10 minutes'
+                    """
+                )
+
+            connection.commit()
+
+            connection.close()
+
+        except Exception as e:
+
+            print(
+                "SIGNAL CLEANUP ERROR:",
+                repr(e)
+            )
+
+        time.sleep(300)
+
+
+# =========================================================
 # STARTUP
 # =========================================================
 
 try:
 
     init_database()
-
-    print(
-        "DATABASE INITIALIZED SUCCESSFULLY"
-    )
 
 except Exception as e:
 
@@ -3033,6 +3894,23 @@ except Exception as e:
 # =========================================================
 
 if __name__ == "__main__":
+
+    try:
+
+        cleanup_thread = threading.Thread(
+            target=cleanup_loop,
+            daemon=True
+        )
+
+        cleanup_thread.start()
+
+    except Exception as e:
+
+        print(
+            "CLEANUP THREAD ERROR:",
+            repr(e)
+        )
+
 
     port = int(
         os.environ.get(
