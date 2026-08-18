@@ -12,6 +12,7 @@ from werkzeug.security import (
     generate_password_hash,
     check_password_hash
 )
+from werkzeug.utils import secure_filename
 
 
 # =========================================================
@@ -86,6 +87,29 @@ def init_database():
 
                     bio TEXT DEFAULT ''
 
+                )
+                """
+            )
+
+
+            # =================================================
+            # SKILL EVIDENCE
+            # =================================================
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS skill_evidence (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    original_filename TEXT NOT NULL,
+                    stored_filename TEXT NOT NULL,
+                    file_type TEXT NOT NULL,
+                    file_data BYTEA NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    reviewed_at TIMESTAMP,
+                    FOREIGN KEY (user_id)
+                        REFERENCES users(id)
+                        ON DELETE CASCADE
                 )
                 """
             )
@@ -471,267 +495,141 @@ def signup():
 
     try:
 
-        data = request.get_json(
-            silent=True
-        )
-
-
-        if not data:
-
-            return jsonify({
-
-                "success": False,
-
-                "message":
-                "Invalid JSON data."
-
-            }), 400
-
-
-        name = str(
-            data.get(
-                "name",
-                ""
-            )
-        ).strip()
-
-
-        email = str(
-            data.get(
-                "email",
-                ""
-            )
-        ).strip().lower()
-
-
-        password = str(
-            data.get(
-                "password",
-                ""
-            )
-        )
-
-
-        skill = str(
-            data.get(
-                "skill",
-                ""
-            )
-        ).strip()
-
-
-        learning_skill = str(
-            data.get(
-                "learning_skill",
-                ""
-            )
-        ).strip()
-
-
-        bio = str(
-            data.get(
-                "bio",
-                ""
-            )
-        ).strip()
-
+        # Accept multipart/form-data from signup.html.
+        name = str(request.form.get("name", "")).strip()
+        email = str(request.form.get("email", "")).strip().lower()
+        password = str(request.form.get("password", ""))
+        skill = str(request.form.get("skill", "")).strip()
+        learning_skill = str(request.form.get("learning_skill", "")).strip()
+        bio = str(request.form.get("bio", "")).strip()
+        evidence_file = request.files.get("skillEvidence")
 
         if not name:
-
-            return jsonify({
-
-                "success": False,
-
-                "message":
-                "Name is required."
-
-            }), 400
-
+            return jsonify({"success": False, "message": "Name is required."}), 400
 
         if not email:
-
-            return jsonify({
-
-                "success": False,
-
-                "message":
-                "Email is required."
-
-            }), 400
-
+            return jsonify({"success": False, "message": "Email is required."}), 400
 
         if not password:
-
-            return jsonify({
-
-                "success": False,
-
-                "message":
-                "Password is required."
-
-            }), 400
-
-
-        if not skill:
-
-            return jsonify({
-
-                "success": False,
-
-                "message":
-                "Skill is required."
-
-            }), 400
-
+            return jsonify({"success": False, "message": "Password is required."}), 400
 
         if len(password) < 6:
+            return jsonify({"success": False, "message": "Password must contain at least 6 characters."}), 400
 
-            return jsonify({
+        if not skill:
+            return jsonify({"success": False, "message": "Skill is required."}), 400
 
-                "success": False,
+        if not evidence_file or not evidence_file.filename:
+            return jsonify({"success": False, "message": "Skill evidence is required."}), 400
 
-                "message":
-                "Password must contain at least 6 characters."
+        allowed_extensions = {"pdf", "jpg", "jpeg", "png", "mp4", "webm"}
+        original_filename = secure_filename(evidence_file.filename)
 
-            }), 400
+        if "." not in original_filename:
+            return jsonify({"success": False, "message": "Invalid file."}), 400
 
+        extension = original_filename.rsplit(".", 1)[1].lower()
+
+        if extension not in allowed_extensions:
+            return jsonify({"success": False, "message": "Allowed files: PDF, JPG, PNG, MP4, WEBM."}), 400
+
+        file_data = evidence_file.read()
+        max_file_size = 10 * 1024 * 1024
+
+        if len(file_data) == 0:
+            return jsonify({"success": False, "message": "Uploaded file is empty."}), 400
+
+        if len(file_data) > max_file_size:
+            return jsonify({"success": False, "message": "File size must be 10 MB or less."}), 400
+
+        file_type = evidence_file.mimetype or "application/octet-stream"
 
         connection = get_connection()
-
 
         with connection.cursor() as cursor:
 
             cursor.execute(
-                """
-                SELECT id
-                FROM users
-                WHERE LOWER(email) = %s
-                """,
+                "SELECT id FROM users WHERE LOWER(email) = %s",
                 (email,)
             )
-
-
             existing = cursor.fetchone()
 
-
             if existing:
-
                 connection.rollback()
-
                 return jsonify({
-
                     "success": False,
-
-                    "message":
-                    "Email already registered. Please login."
-
+                    "message": "Email already registered. Please login."
                 }), 409
 
-
-            hashed_password = generate_password_hash(
-                password
-            )
-
+            hashed_password = generate_password_hash(password)
 
             cursor.execute(
                 """
                 INSERT INTO users
-                (
-                    name,
-                    email,
-                    password,
-                    skill,
-                    learning_skill,
-                    bio
-                )
-
-                VALUES
-                (
-                    %s,
-                    %s,
-                    %s,
-                    %s,
-                    %s,
-                    %s
-                )
-
-                RETURNING
-                    id,
-                    name,
-                    email,
-                    skill,
-                    learning_skill,
-                    bio
+                (name, email, password, skill, learning_skill, bio)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id, name, email, skill, learning_skill, bio
                 """,
-
                 (
-                    name,
-                    email,
-                    hashed_password,
-                    skill,
-                    learning_skill,
-                    bio
+                    name, email, hashed_password,
+                    skill, learning_skill, bio
                 )
             )
 
-
             new_user = cursor.fetchone()
 
+            stored_filename = (
+                f"user_{new_user['id']}_{int(time.time())}.{extension}"
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO skill_evidence
+                (
+                    user_id, original_filename, stored_filename,
+                    file_type, file_data, status
+                )
+                VALUES (%s, %s, %s, %s, %s, 'pending')
+                """,
+                (
+                    new_user["id"],
+                    original_filename,
+                    stored_filename,
+                    file_type,
+                    file_data
+                )
+            )
 
         connection.commit()
 
-
         return jsonify({
-
             "success": True,
-
-            "message":
-            "Account created successfully!",
-
-            "user":
-            new_user
-
+            "message": "Account created successfully. Skill evidence is pending admin verification.",
+            "verification_status": "pending",
+            "user": new_user
         }), 201
-
 
     except psycopg.errors.UniqueViolation:
 
         if connection:
             connection.rollback()
 
-
         return jsonify({
-
             "success": False,
-
-            "message":
-            "Email already registered. Please login."
-
+            "message": "Email already registered. Please login."
         }), 409
-
 
     except Exception as e:
 
         if connection:
             connection.rollback()
 
-
-        print(
-            "SIGNUP ERROR:",
-            repr(e)
-        )
-
+        print("SIGNUP ERROR:", repr(e))
 
         return jsonify({
-
             "success": False,
-
-            "message":
-            "Signup failed: " +
-            str(e)
-
+            "message": "Signup failed: " + str(e)
         }), 500
-
 
     finally:
 
@@ -3925,3 +3823,4 @@ if __name__ == "__main__":
         port=port,
         debug=False
     )
+    
